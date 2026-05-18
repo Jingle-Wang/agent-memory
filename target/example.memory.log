@@ -1,0 +1,6 @@
+event	mem_19e39789427_1	user:demo	user	Remember that I prefer concise answers. When you change code, run tests.		1779080664
+memory	mem_19e39789429_2	user:demo	semantic	Remember that I prefer concise answers	mem_19e39789427_1	0.850000	0.820000		1779080664	1779080664				
+memory	mem_19e39789429_3	user:demo	procedural	When you change code, run tests	mem_19e39789427_1	0.750000	0.720000		1779080664	1779080664				
+event	mem_19e39bbafb8_1	user:demo	user	Remember that I prefer concise answers. When you change code, run tests.		1779085062
+memory	mem_19e39789429_2	user:demo	semantic	Remember that I prefer concise answers	mem_19e39789427_1	0.850000	0.820000		1779080664	1779085062				
+memory	mem_19e39789429_3	user:demo	procedural	When you change code, run tests	mem_19e39789427_1	0.750000	0.720000		1779080664	1779085062				

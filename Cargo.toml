@@ -1,0 +1,20 @@
+[package]
+name = "agent-memory"
+version = "0.1.0"
+edition = "2024"
+description = "A lightweight local-first memory layer for AI agents."
+license = "MIT"
+
+[features]
+sqlite = ["rusqlite"]
+
+[dependencies]
+rusqlite = { version = "0.39.0", features = ["bundled"], optional = true }
+
+[lib]
+name = "agent_memory"
+path = "src/lib.rs"
+
+[[example]]
+name = "basic"
+path = "examples/basic.rs"
