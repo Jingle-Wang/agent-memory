@@ -11,8 +11,14 @@ pub mod models;
 pub mod retriever;
 pub mod store;
 
+#[cfg(feature = "sqlite")]
+pub mod sqlite_store;
+
 pub use engine::MemoryEngine;
 pub use file_store::FileMemoryStore;
 pub use models::{Event, Memory, MemoryPacket, MemoryQuery, MemoryType};
 pub use retriever::HybridMemoryRetriever;
 pub use store::{MemoryStore, StoreResult};
+
+#[cfg(feature = "sqlite")]
+pub use sqlite_store::SqliteMemoryStore;

@@ -16,6 +16,9 @@ The first implementation is intentionally small and std-only:
 ```bash
 cargo test
 cargo run --example basic
+
+# With SQLite backend:
+cargo test --features sqlite
 ```
 
 ```rust
@@ -37,6 +40,26 @@ let context = engine.build_context(
 )?;
 ```
 
+### SQLite Backend
+
+Enable the `sqlite` feature to use `SqliteMemoryStore`:
+
+```toml
+[dependencies]
+agent-memory = { version = "0.1.0", features = ["sqlite"] }
+```
+
+```rust
+use agent_memory::{SqliteMemoryStore, MemoryEngine, Event, MemoryQuery};
+
+let store = SqliteMemoryStore::open("memories.db")?;
+// or in-memory for testing:
+let store = SqliteMemoryStore::open_in_memory()?;
+
+let mut engine = MemoryEngine::new(store);
+engine.ingest_event(Event::new("some observation"))?;
+```
+
 ## Architecture
 
 `MemoryEngine` is the agent-facing API. It writes raw events, extracts candidate memories,
@@ -51,7 +74,7 @@ placeholder for an on-device or hosted embedding model.
 
 ## Evolution Path
 
-1. Add `SqliteMemoryStore` behind the existing `MemoryStore` trait.
+1. ~~Add `SqliteMemoryStore` behind the existing `MemoryStore` trait.~~ ✅ Done — enable with `features = ["sqlite"]`
 2. Replace `HashEmbedding` with a pluggable embedding provider.
 3. Add background consolidation for reflection and stale-fact expiry.
 4. Add local-first sync with conflict resolution.
