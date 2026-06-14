@@ -1,8 +1,6 @@
 #[cfg(feature = "sqlite")]
 mod sqlite_tests {
-    use agent_memory::{
-        Event, Memory, MemoryQuery, MemoryStore, MemoryType, SqliteMemoryStore,
-    };
+    use agent_memory::{Event, Memory, MemoryQuery, MemoryStore, MemoryType, SqliteMemoryStore};
 
     fn make_store() -> SqliteMemoryStore {
         SqliteMemoryStore::open_in_memory().expect("open in-memory store")
@@ -73,14 +71,10 @@ mod sqlite_tests {
     fn test_list_memories_by_namespace() {
         let mut store = make_store();
         store
-            .add_memory(
-                Memory::new("ns1 memory", MemoryType::Semantic).namespace("ns1"),
-            )
+            .add_memory(Memory::new("ns1 memory", MemoryType::Semantic).namespace("ns1"))
             .expect("add");
         store
-            .add_memory(
-                Memory::new("ns2 memory", MemoryType::Semantic).namespace("ns2"),
-            )
+            .add_memory(Memory::new("ns2 memory", MemoryType::Semantic).namespace("ns2"))
             .expect("add");
 
         let query = MemoryQuery::new("anything").namespace("ns1");
@@ -93,19 +87,13 @@ mod sqlite_tests {
     fn test_list_memories_by_type() {
         let mut store = make_store();
         store
-            .add_memory(
-                Memory::new("episodic", MemoryType::Episodic).namespace("test"),
-            )
+            .add_memory(Memory::new("episodic", MemoryType::Episodic).namespace("test"))
             .expect("add");
         store
-            .add_memory(
-                Memory::new("semantic", MemoryType::Semantic).namespace("test"),
-            )
+            .add_memory(Memory::new("semantic", MemoryType::Semantic).namespace("test"))
             .expect("add");
         store
-            .add_memory(
-                Memory::new("working", MemoryType::Working).namespace("test"),
-            )
+            .add_memory(Memory::new("working", MemoryType::Working).namespace("test"))
             .expect("add");
 
         let query = MemoryQuery::new("anything")
@@ -113,7 +101,11 @@ mod sqlite_tests {
             .memory_types(vec![MemoryType::Episodic, MemoryType::Working]);
         let results = store.list_memories(&query).expect("list");
         assert_eq!(results.len(), 2);
-        assert!(results.iter().all(|m| m.memory_type != MemoryType::Semantic));
+        assert!(
+            results
+                .iter()
+                .all(|m| m.memory_type != MemoryType::Semantic)
+        );
     }
 
     #[test]
@@ -122,8 +114,7 @@ mod sqlite_tests {
         for i in 0..10 {
             store
                 .add_memory(
-                    Memory::new(format!("memory {i}"), MemoryType::Semantic)
-                        .namespace("test"),
+                    Memory::new(format!("memory {i}"), MemoryType::Semantic).namespace("test"),
                 )
                 .expect("add");
         }
@@ -137,17 +128,21 @@ mod sqlite_tests {
     fn test_memory_with_metadata() {
         let mut store = make_store();
         let mut memory = Memory::new("with meta", MemoryType::Procedural).namespace("test");
-        memory.metadata.insert("key1".to_string(), "value1".to_string());
-        memory.metadata.insert("key2".to_string(), "hello world".to_string());
+        memory
+            .metadata
+            .insert("key1".to_string(), "value1".to_string());
+        memory
+            .metadata
+            .insert("key2".to_string(), "hello world".to_string());
 
         store.add_memory(memory.clone()).expect("add memory");
 
-        let fetched = store
-            .get_memory(&memory.id)
-            .expect("get")
-            .expect("exists");
+        let fetched = store.get_memory(&memory.id).expect("get").expect("exists");
         assert_eq!(fetched.metadata.get("key1"), Some(&"value1".to_string()));
-        assert_eq!(fetched.metadata.get("key2"), Some(&"hello world".to_string()));
+        assert_eq!(
+            fetched.metadata.get("key2"),
+            Some(&"hello world".to_string())
+        );
     }
 
     #[test]

@@ -1,0 +1,23 @@
+[
+  {
+    "sample_id": "locomo-null",
+    "conversation": {
+      "session_1_date_time": "2026-01-02",
+      "session_1": [
+        {
+          "dia_id": "turn-1",
+          "speaker": "Alex",
+          "text": "I am still deciding what to buy."
+        }
+      ]
+    },
+    "qa": [
+      {
+        "question": "What did Alex buy?",
+        "answer": null,
+        "evidence": [],
+        "category": 5
+      }
+    ]
+  }
+]

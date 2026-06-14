@@ -1,13 +1,22 @@
 use std::collections::BTreeSet;
 
-use crate::embedding::token_overlap_score;
+use crate::embedding::{EmbeddingProvider, token_overlap_score};
+use crate::extractor::MemoryExtractor;
+use crate::ingestion_buffer::IngestionBuffer;
 use crate::models::{Event, Memory, MemoryPacket, MemoryQuery, MemoryType};
 use crate::retriever::HybridMemoryRetriever;
 use crate::store::{MemoryStore, StoreResult};
 
+/// Default window size for the ingestion buffer.
+/// 5 turns is the sweet spot for LoCoMo-style conversations (10-15 turns/session):
+/// enough context for the extractor to catch cross-turn entity relations,
+/// but not so large that it overwhelms the LLM prompt.
+pub const DEFAULT_INGESTION_WINDOW: usize = 5;
+
 pub struct MemoryEngine<S: MemoryStore> {
     store: S,
     retriever: HybridMemoryRetriever,
+    buffer: Option<IngestionBuffer>,
 }
 
 impl<S: MemoryStore> MemoryEngine<S> {
@@ -15,6 +24,42 @@ impl<S: MemoryStore> MemoryEngine<S> {
         Self {
             store,
             retriever: HybridMemoryRetriever::new(),
+            buffer: None,
+        }
+    }
+
+    pub fn new_with_embedding(store: S, embedder: Box<dyn EmbeddingProvider>) -> Self {
+        Self {
+            store,
+            retriever: HybridMemoryRetriever::with_embedder(embedder),
+            buffer: None,
+        }
+    }
+
+    /// Create an engine with the sliding-window ingestion buffer enabled.
+    ///
+    /// When a buffer is present, [`ingest_buffered`] and
+    /// [`ingest_buffered_with_extractor`] will accumulate events until
+    /// `window_size` turns are collected, then flush them as a combined
+    /// multi-turn context to the extractor for richer fact extraction.
+    pub fn new_with_buffer(store: S, window_size: usize) -> Self {
+        Self {
+            store,
+            retriever: HybridMemoryRetriever::new(),
+            buffer: Some(IngestionBuffer::new(window_size)),
+        }
+    }
+
+    /// Create an engine with both an external embedder and the ingestion buffer.
+    pub fn new_with_buffer_and_embedding(
+        store: S,
+        embedder: Box<dyn EmbeddingProvider>,
+        window_size: usize,
+    ) -> Self {
+        Self {
+            store,
+            retriever: HybridMemoryRetriever::with_embedder(embedder),
+            buffer: Some(IngestionBuffer::new(window_size)),
         }
     }
 
@@ -53,6 +98,156 @@ impl<S: MemoryStore> MemoryEngine<S> {
             committed.push(self.remember(memory)?);
         }
         Ok(committed)
+    }
+
+    /// Ingest an event using an external `MemoryExtractor` instead of the
+    /// built-in rule-based extractor. Useful for LLM-backed extraction.
+    pub fn ingest_event_with_extractor(
+        &mut self,
+        event: Event,
+        extractor: &dyn MemoryExtractor,
+    ) -> StoreResult<Vec<Memory>> {
+        let event = self.add_event(event)?;
+        let candidates = extractor
+            .extract(&event, None)
+            .map_err(|msg| crate::store::StoreError::Corrupt(msg))?;
+        let mut committed = Vec::new();
+        for memory in candidates {
+            committed.push(self.remember(memory)?);
+        }
+        Ok(committed)
+    }
+
+    // ── Buffered (sliding-window) ingestion methods ──────────────────────
+    //
+    // These methods accumulate conversation turns in an internal
+    // `IngestionBuffer`. When the buffer reaches its window size (default
+    // 5 turns), all buffered events are combined into a single multi-turn
+    // context and sent to the extractor in one call. This gives the LLM
+    // enough surrounding dialog to extract rich facts — entity relationships,
+    // implied preferences, emotional arcs — instead of thin single-turn
+    // snippets.
+    //
+    // For conversations shorter than the window size, call `flush_buffer()`
+    // at the end to extract from the remaining turns.
+
+    /// Ingest an event with buffered rule-based extraction.
+    ///
+    /// Events accumulate in the internal buffer. When the window is full,
+    /// the combined multi-turn context is passed to the built-in rule-based
+    /// extractor. Returns an empty vec for intermediate turns (buffer not
+    /// yet full).
+    ///
+    /// Requires the engine to have been created with
+    /// [`new_with_buffer`](Self::new_with_buffer).
+    pub fn ingest_buffered(&mut self, event: Event) -> StoreResult<Vec<Memory>> {
+        let event = self.add_event(event)?;
+        let Some(buffer) = self.buffer.as_mut() else {
+            // No buffer configured — fall back to single-event extraction
+            let candidates = extract_memories(&event);
+            let mut committed = Vec::new();
+            for memory in candidates {
+                committed.push(self.remember(memory)?);
+            }
+            return Ok(committed);
+        };
+        if let Some(combined) = buffer.push(event) {
+            let candidates = extract_memories(&combined);
+            let mut committed = Vec::new();
+            for memory in candidates {
+                committed.push(self.remember(memory)?);
+            }
+            Ok(committed)
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    /// Ingest an event with buffered LLM extraction.
+    ///
+    /// Like [`ingest_buffered`](Self::ingest_buffered) but uses the
+    /// provided external extractor (typically `LlmMemoryExtractor`) on
+    /// the combined multi-turn context.
+    ///
+    /// Requires the engine to have been created with
+    /// [`new_with_buffer`](Self::new_with_buffer).
+    pub fn ingest_buffered_with_extractor(
+        &mut self,
+        event: Event,
+        extractor: &dyn MemoryExtractor,
+    ) -> StoreResult<Vec<Memory>> {
+        let event = self.add_event(event)?;
+        let Some(buffer) = self.buffer.as_mut() else {
+            // No buffer configured — fall back to single-event extraction
+            let candidates = extractor
+                .extract(&event, None)
+                .map_err(|msg| crate::store::StoreError::Corrupt(msg))?;
+            let mut committed = Vec::new();
+            for memory in candidates {
+                committed.push(self.remember(memory)?);
+            }
+            return Ok(committed);
+        };
+        if let Some(combined) = buffer.push(event) {
+            let candidates = extractor
+                .extract(&combined, None)
+                .map_err(|msg| crate::store::StoreError::Corrupt(msg))?;
+            let mut committed = Vec::new();
+            for memory in candidates {
+                committed.push(self.remember(memory)?);
+            }
+            Ok(committed)
+        } else {
+            Ok(vec![])
+        }
+    }
+
+    /// Flush any remaining events in the ingestion buffer.
+    ///
+    /// Call this at the end of a conversation to ensure the last
+    /// (possibly partial) window is not lost. Uses the rule-based extractor.
+    pub fn flush_buffer(&mut self) -> StoreResult<Vec<Memory>> {
+        let Some(buffer) = self.buffer.as_mut() else {
+            return Ok(vec![]);
+        };
+        let Some(combined) = buffer.flush() else {
+            return Ok(vec![]);
+        };
+        let candidates = extract_memories(&combined);
+        let mut committed = Vec::new();
+        for memory in candidates {
+            committed.push(self.remember(memory)?);
+        }
+        Ok(committed)
+    }
+
+    /// Flush any remaining events in the ingestion buffer using an external extractor.
+    ///
+    /// Call this at the end of a conversation. Uses the provided extractor
+    /// (typically `LlmMemoryExtractor`).
+    pub fn flush_buffer_with_extractor(
+        &mut self,
+        extractor: &dyn MemoryExtractor,
+    ) -> StoreResult<Vec<Memory>> {
+        let Some(buffer) = self.buffer.as_mut() else {
+            return Ok(vec![]);
+        };
+        let Some(combined) = buffer.flush() else {
+            return Ok(vec![]);
+        };
+        let candidates = extractor
+            .extract(&combined, None)
+            .map_err(|msg| crate::store::StoreError::Corrupt(msg))?;
+        let mut committed = Vec::new();
+        for memory in candidates {
+            committed.push(self.remember(memory)?);
+        }
+        Ok(committed)
+    }
+
+    /// Check whether the engine has a buffer configured.
+    pub fn has_buffer(&self) -> bool {
+        self.buffer.is_some()
     }
 
     pub fn search(&self, query: MemoryQuery) -> StoreResult<Vec<MemoryPacket>> {
@@ -152,18 +347,38 @@ fn should_keep(lower: &str, memory_type: &MemoryType) -> bool {
     }
     match memory_type {
         MemoryType::Semantic | MemoryType::Procedural | MemoryType::Reflection => true,
-        MemoryType::Episodic => contains_any(
-            lower,
-            &[
-                "decided",
-                "finished",
-                "failed",
-                "fixed",
-                "blocked",
-                "created",
-                "implemented",
-            ],
-        ),
+        MemoryType::Episodic => {
+            // Relaxed filter: keep all non-chitchat sentences.
+            // Filter out only pure social formulas (≤3 words, greeting-like).
+            let word_count = lower.split_whitespace().count();
+            if word_count <= 3 {
+                let chitchat = [
+                    "hi",
+                    "hey",
+                    "hello",
+                    "ok",
+                    "okay",
+                    "thanks",
+                    "thank you",
+                    "bye",
+                    "goodbye",
+                    "yes",
+                    "no",
+                    "sure",
+                    "cool",
+                    "nice",
+                    "great",
+                    "fine",
+                    "alright",
+                    "hmm",
+                    "lol",
+                ];
+                if chitchat.iter().any(|&c| lower.trim() == c) {
+                    return false;
+                }
+            }
+            true
+        }
         MemoryType::Working => false,
     }
 }

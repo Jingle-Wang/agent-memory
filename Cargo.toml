@@ -6,10 +6,18 @@ description = "A lightweight local-first memory layer for AI agents."
 license = "MIT"
 
 [features]
+default = []
+benchmark = []
 sqlite = ["rusqlite"]
+llm-http = ["ureq"]
+embed-ollama = ["ureq"]
 
 [dependencies]
+log = "0.4"
 rusqlite = { version = "0.39.0", features = ["bundled"], optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+ureq = { version = "2.12.1", features = ["json"], optional = true }
 
 [lib]
 name = "agent_memory"
@@ -18,3 +26,13 @@ path = "src/lib.rs"
 [[example]]
 name = "basic"
 path = "examples/basic.rs"
+
+[[bin]]
+name = "agent-memory-bench"
+path = "src/bin/agent-memory-bench.rs"
+required-features = ["benchmark"]
+
+[[bin]]
+name = "locomo_recall_diag"
+path = "src/bin/locomo_recall_diag.rs"
+required-features = ["benchmark", "sqlite"]

@@ -2,6 +2,80 @@ use std::collections::BTreeSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+/// Trait for pluggable embedding providers (Ollama, OpenAI, local models, etc).
+pub trait EmbeddingProvider: Send + Sync {
+    fn embed(&self, text: &str) -> Vec<f32>;
+    fn dimensions(&self) -> usize;
+}
+
+/// Ollama-hosted embedding model accessed via HTTP.
+#[cfg(feature = "embed-ollama")]
+pub struct OllamaEmbeddingProvider {
+    base_url: String,
+    model: String,
+    dimensions: usize,
+}
+
+#[cfg(feature = "embed-ollama")]
+impl OllamaEmbeddingProvider {
+    pub fn from_env() -> Self {
+        let base_url =
+            std::env::var("OLLAMA_HOST").unwrap_or_else(|_| "http://localhost:11434".to_string());
+        let model =
+            std::env::var("OLLAMA_EMBED_MODEL").unwrap_or_else(|_| "nomic-embed-text".to_string());
+        Self {
+            base_url,
+            model,
+            dimensions: 768,
+        }
+    }
+
+    pub fn with_model(mut self, model: impl Into<String>) -> Self {
+        self.model = model.into();
+        self
+    }
+
+    pub fn with_dimensions(mut self, dimensions: usize) -> Self {
+        self.dimensions = dimensions;
+        self
+    }
+}
+
+#[cfg(feature = "embed-ollama")]
+impl EmbeddingProvider for OllamaEmbeddingProvider {
+    fn embed(&self, text: &str) -> Vec<f32> {
+        let body = serde_json::json!({
+            "model": self.model,
+            "prompt": text,
+        });
+        match ureq::post(&format!("{}/api/embeddings", self.base_url))
+            .set("Content-Type", "application/json")
+            .send_json(&body)
+        {
+            Ok(response) => {
+                let json: serde_json::Value = response.into_json().unwrap_or_default();
+                json["embedding"]
+                    .as_array()
+                    .map(|values| {
+                        values
+                            .iter()
+                            .filter_map(|v| v.as_f64().map(|f| f as f32))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+            Err(_) => {
+                // Fall back to hash embedding on error
+                HashEmbedding::new(self.dimensions).embed(text)
+            }
+        }
+    }
+
+    fn dimensions(&self) -> usize {
+        self.dimensions
+    }
+}
+
 pub fn tokenize(text: &str) -> Vec<String> {
     text.split(|ch: char| !ch.is_alphanumeric() && ch != '\'')
         .filter(|token| !token.is_empty())

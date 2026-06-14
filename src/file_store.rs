@@ -163,6 +163,9 @@ impl MemoryStore for FileMemoryStore {
             if !query.include_expired && !is_valid_at(memory, now) {
                 continue;
             }
+            if !query.include_side_channel && memory.is_side_channel() {
+                continue;
+            }
             result.push(memory.clone());
         }
         Ok(result)

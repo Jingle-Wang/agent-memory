@@ -3,11 +3,9 @@ use std::path::Path;
 use std::str::FromStr;
 use std::time::SystemTime;
 
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
-use crate::models::{
-    epoch_seconds, from_epoch_seconds, Event, Memory, MemoryQuery, MemoryType,
-};
+use crate::models::{Event, Memory, MemoryQuery, MemoryType, epoch_seconds, from_epoch_seconds};
 use crate::store::{MemoryStore, StoreError, StoreResult};
 
 /// Convert SystemTime → i64 seconds for SQLite storage.
@@ -39,8 +37,7 @@ pub struct SqliteMemoryStore {
 impl SqliteMemoryStore {
     /// Open (or create) a SQLite-backed memory store at the given path.
     pub fn open(path: impl AsRef<Path>) -> StoreResult<Self> {
-        let conn =
-            Connection::open(path).map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
+        let conn = Connection::open(path).map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
@@ -48,8 +45,8 @@ impl SqliteMemoryStore {
 
     /// Open an in-memory SQLite store (useful for testing).
     pub fn open_in_memory() -> StoreResult<Self> {
-        let conn = Connection::open_in_memory()
-            .map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
+        let conn =
+            Connection::open_in_memory().map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
         let store = Self { conn };
         store.init_schema()?;
         Ok(store)
@@ -306,7 +303,9 @@ impl MemoryStore for SqliteMemoryStore {
             param_index += 1;
         }
 
-        sql.push_str(" ORDER BY updated_at DESC");
+        // Add LIMIT at SQL level to avoid fetching all rows (O(n²) when
+        // called repeatedly during ingestion via find_duplicate).
+        sql.push_str(&format!(" ORDER BY updated_at DESC LIMIT ?{param_index}"));
 
         let mut stmt = self
             .conn
@@ -323,6 +322,7 @@ impl MemoryStore for SqliteMemoryStore {
             param_values.push(Box::new(now_secs));
             param_values.push(Box::new(now_secs));
         }
+        param_values.push(Box::new(query.limit as i64));
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
@@ -331,8 +331,14 @@ impl MemoryStore for SqliteMemoryStore {
             .query_map(param_refs.as_slice(), |row| Ok(row_to_memory(row)))
             .map_err(|e| StoreError::Io(std::io::Error::other(e)))?;
 
-        let mut results: Vec<Memory> = rows.filter_map(|r| r.ok()).collect();
-        results.truncate(query.limit);
+        let results: Vec<Memory> = rows
+            .filter_map(|r| r.ok())
+            .filter(|memory| query.include_side_channel || !memory.is_side_channel())
+            .collect();
+        // LIMIT is already applied in SQL; truncate is a safety net.
+        // REMOVED: results.truncate(query.limit) — the retriever layer handles Top-K.
+        // Keeping truncation here would silently discard gold evidence from earlier sessions
+        // when benchmark sets query.limit to a small value (e.g. 10). See architecture-review.md P0#1.
         Ok(results)
     }
 }

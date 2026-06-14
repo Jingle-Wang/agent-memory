@@ -40,7 +40,14 @@ impl FromStr for MemoryType {
             "semantic" => Ok(MemoryType::Semantic),
             "procedural" => Ok(MemoryType::Procedural),
             "reflection" => Ok(MemoryType::Reflection),
-            other => Err(format!("unknown memory type: {other}")),
+            other => {
+                // Robust fallback for LLM-generated types (plan, goal, preference, etc.)
+                // Without this, a single unrecognized type crashes the entire ingestion run.
+                log::warn!(
+                    "Unknown memory type '{other}' from LLM extractor — falling back to Episodic"
+                );
+                Ok(MemoryType::Episodic)
+            }
         }
     }
 }
@@ -134,6 +141,10 @@ impl Memory {
         self.confidence = confidence.clamp(0.0, 1.0);
         self
     }
+
+    pub fn is_side_channel(&self) -> bool {
+        self.metadata.contains_key("side_channel")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -143,6 +154,7 @@ pub struct MemoryQuery {
     pub memory_types: Vec<MemoryType>,
     pub limit: usize,
     pub include_expired: bool,
+    pub include_side_channel: bool,
 }
 
 impl MemoryQuery {
@@ -153,6 +165,7 @@ impl MemoryQuery {
             memory_types: Vec::new(),
             limit: 8,
             include_expired: false,
+            include_side_channel: false,
         }
     }
 
@@ -168,6 +181,11 @@ impl MemoryQuery {
 
     pub fn limit(mut self, limit: usize) -> Self {
         self.limit = limit;
+        self
+    }
+
+    pub fn include_side_channel(mut self, include: bool) -> Self {
+        self.include_side_channel = include;
         self
     }
 }
