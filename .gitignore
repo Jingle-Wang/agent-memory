@@ -3,3 +3,4 @@ runs/
 data/benchmarks/
 *.db-journal
 agent.memory.log
+AGENTS.md
