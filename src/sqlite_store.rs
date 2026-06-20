@@ -322,7 +322,7 @@ impl MemoryStore for SqliteMemoryStore {
             param_values.push(Box::new(now_secs));
             param_values.push(Box::new(now_secs));
         }
-        param_values.push(Box::new(query.limit as i64));
+        param_values.push(Box::new(query.limit.max(5000) as i64));
 
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
