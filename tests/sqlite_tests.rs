@@ -121,7 +121,7 @@ mod sqlite_tests {
 
         let query = MemoryQuery::new("anything").namespace("test").limit(3);
         let results = store.list_memories(&query).expect("list");
-        assert_eq!(results.len(), 10);
+        assert_eq!(results.len(), 3);
     }
 
     #[test]

@@ -73,7 +73,7 @@ impl MemoryStore for VolatileMemoryStore {
             }
             memories.push(memory.clone());
         }
-        memories.truncate(query.limit.max(5000));
+        memories.truncate(query.limit);
         Ok(memories)
     }
 }
