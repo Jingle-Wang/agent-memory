@@ -21,6 +21,27 @@ cargo run --example basic
 cargo test --features sqlite
 ```
 
+### API Key Setup (for LLM features)
+
+Benchmarks and LLM-based extraction require a DeepSeek API key (or any OpenAI-compatible key). The key is read from environment variables and **never committed to git**.
+
+```bash
+# 1. Copy the template
+cp .env.example .env.local
+
+# 2. Edit .env.local with your actual key
+# Replace "sk-your-api-key-here" with your real key
+
+# 3. Source it before running benchmarks
+source .env.local
+```
+
+The following are equivalent — the scripts accept either:
+- Set `AGENT_MEMORY_LLM_API_KEY` directly, **or**
+- Set `DEEPSEEK_API_KEY` (scripts fall back to it)
+
+All tests run without an API key. Tests that require LLM access (behind `--features benchmark`) use fixture data or rule-based extraction, so `cargo test` always passes regardless of key availability.
+
 ```rust
 use agent_memory::{Event, FileMemoryStore, MemoryEngine, MemoryQuery};
 

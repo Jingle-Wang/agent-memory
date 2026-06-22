@@ -1,16 +1,21 @@
 #!/bin/bash
 set -e
 
-# Source the .env file
+# Source user-level defaults first, then local secrets override them.
 set -a
-source <(grep -v '^#' ~/.hermes/.env | grep -v '^$')
+if [ -f ~/.hermes/.env ]; then
+  source ~/.hermes/.env
+fi
+if [ -f .env.local ]; then
+  source .env.local
+fi
 set +a
 
 # Override with benchmark-specific values
 export AGENT_MEMORY_LLM_PROVIDER=openai-compatible
-export AGENT_MEMORY_LLM_MODEL=deepseek-v4-pro
-export AGENT_MEMORY_LLM_API_KEY="$DEEPSEEK_API_KEY"
-export AGENT_MEMORY_LLM_BASE_URL="$DEEPSEEK_BASE_URL/v1"
+export AGENT_MEMORY_LLM_MODEL="${AGENT_MEMORY_LLM_MODEL:-deepseek-v4-pro}"
+export AGENT_MEMORY_LLM_API_KEY="${AGENT_MEMORY_LLM_API_KEY:-$DEEPSEEK_API_KEY}"
+export AGENT_MEMORY_LLM_BASE_URL="${AGENT_MEMORY_LLM_BASE_URL:-$DEEPSEEK_BASE_URL/v1}"
 export AGENT_MEMORY_EMBEDDING_MODEL=all-minilm
 
 echo "=== Environment ==="

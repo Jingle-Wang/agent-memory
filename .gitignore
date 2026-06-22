@@ -1,6 +1,9 @@
 target/
 runs/
 data/benchmarks/
+.env
+.env.*
+!.env.example
 *.db-journal
 agent.memory.log
 AGENTS.md

@@ -1,12 +1,17 @@
 #!/bin/bash
 set -a
-source ~/.hermes/.env
+if [ -f ~/.hermes/.env ]; then
+  source ~/.hermes/.env
+fi
+if [ -f .env.local ]; then
+  source .env.local
+fi
 set +a
 
 export AGENT_MEMORY_LLM_PROVIDER=openai-compatible
-export AGENT_MEMORY_LLM_MODEL=deepseek-v4-flash
-export AGENT_MEMORY_LLM_API_KEY=$DEEPSEEK_API_KEY
-export AGENT_MEMORY_LLM_BASE_URL=$DEEPSEEK_BASE_URL/v1
+export AGENT_MEMORY_LLM_MODEL=${AGENT_MEMORY_LLM_MODEL:-deepseek-v4-flash}
+export AGENT_MEMORY_LLM_API_KEY=${AGENT_MEMORY_LLM_API_KEY:-$DEEPSEEK_API_KEY}
+export AGENT_MEMORY_LLM_BASE_URL=${AGENT_MEMORY_LLM_BASE_URL:-$DEEPSEEK_BASE_URL/v1}
 export AGENT_MEMORY_EMBEDDING_MODEL=all-minilm
 
 cd /home/jingle/codex/agent-memory
