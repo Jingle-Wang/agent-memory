@@ -541,7 +541,47 @@ fn assemble_answer_evidence<S: MemoryStore>(
             evidence.push(packet);
         }
     }
+
+    // Phase 2 ordering fix: deduplicate by content and sort stably so the LLM
+    // sees the same evidence in the same order regardless of retrieval ranking.
+    // Without this, stemmer ranking changes → different evidence ordering →
+    // LLM gives different answers even though the same evidence is present.
+    dedup_and_sort_evidence(&mut evidence);
+
     Ok(evidence)
+}
+
+/// Deduplicate evidence packets by content (keep the one with the highest
+/// score), then sort stably by source_event_id (None first), and content as
+/// final tie-breaker.
+fn dedup_and_sort_evidence(evidence: &mut Vec<MemoryPacket>) {
+    // Content-based dedup — same text from different memory types
+    let mut content_best: std::collections::HashMap<String, (usize, f32)> =
+        std::collections::HashMap::new();
+    let mut unique: Vec<(usize, MemoryPacket)> = Vec::new();
+    for (i, packet) in evidence.iter().enumerate() {
+        let key = packet.memory.content.clone();
+        if let Some(&(existing_idx, existing_score)) = content_best.get(&key) {
+            if packet.score > existing_score {
+                unique.retain(|(idx, _)| *idx != existing_idx);
+                content_best.insert(key, (i, packet.score));
+                unique.push((i, packet.clone()));
+            }
+            // else skip lower-scored duplicate
+        } else {
+            content_best.insert(key, (i, packet.score));
+            unique.push((i, packet.clone()));
+        }
+    }
+    *evidence = unique.into_iter().map(|(_, p)| p).collect();
+
+    // Sort stably: by source_event_id (None last), then content
+    evidence.sort_by(|a, b| {
+        a.memory
+            .source_event_id
+            .cmp(&b.memory.source_event_id)
+            .then_with(|| a.memory.content.cmp(&b.memory.content))
+    });
 }
 
 fn select_answer_primary(
