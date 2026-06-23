@@ -1,6 +1,11 @@
 use std::collections::BTreeSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::LazyLock;
+
+use rust_stemmers::{Algorithm, Stemmer};
+
+static STEMMER: LazyLock<Stemmer> = LazyLock::new(|| Stemmer::create(Algorithm::English));
 
 /// Trait for pluggable embedding providers (Ollama, OpenAI, local models, etc).
 pub trait EmbeddingProvider: Send + Sync {
@@ -76,10 +81,26 @@ impl EmbeddingProvider for OllamaEmbeddingProvider {
     }
 }
 
+/// Tokenizes text into lowercase stemmed tokens, stripping possessives.
+///
+/// Splits on non-alphanumeric boundaries (preserving apostrophes for
+/// contractions/possessives), lowercases, strips trailing `'s` and `'`
+/// suffixes, then applies Porter stemming.
 pub fn tokenize(text: &str) -> Vec<String> {
     text.split(|ch: char| !ch.is_alphanumeric() && ch != '\'')
         .filter(|token| !token.is_empty())
-        .map(|token| token.to_lowercase())
+        .map(|token| {
+            let lowered = token.to_lowercase();
+            // Strip possessive suffixes: "'s" then bare "'"
+            // ("Caroline's" → "caroline", "dogs'" → "dogs")
+            let stripped = lowered
+                .strip_suffix("'s")
+                .or_else(|| lowered.strip_suffix('\''))
+                .map(|s| s.to_string())
+                .unwrap_or(lowered);
+            // Apply Porter stemming ("camping" → "camp", "researching" → "research")
+            STEMMER.stem(&stripped).into_owned()
+        })
         .collect()
 }
 

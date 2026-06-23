@@ -259,14 +259,17 @@ fn abstain_on_speaker_mismatch(
             continue;
         }
         let subject = subject_mention(&packet.content);
-        let owner = if subject.as_deref() == Some(expected.as_str()) {
+        let owner = if subject
+            .as_deref()
+            .is_some_and(|s| speaker_matches(s, expected.as_str()))
+        {
             subject
         } else {
             packet_speaker(packet)
         };
         match owner.as_deref() {
-            Some(owner) if owner == expected => expected_support += 1,
-            Some(owner) if owner != expected => other_support += 1,
+            Some(owner) if speaker_matches(owner, expected.as_str()) => expected_support += 1,
+            Some(owner) if !speaker_matches(owner, expected.as_str()) => other_support += 1,
             _ => {}
         }
     }
@@ -342,9 +345,28 @@ fn person_hint_from_question(question: &str) -> Option<String> {
 }
 
 fn question_mentions_person(question: &str, speaker: &str) -> bool {
-    tokenize(question)
-        .into_iter()
-        .any(|term| term == speaker || term == speaker.trim_end_matches('s'))
+    tokenize(question).into_iter().any(|term| {
+        term == speaker
+            || term == speaker.trim_end_matches('s')
+            || speaker.starts_with(term.as_str())
+            || term.starts_with(speaker)
+    })
+}
+
+fn speaker_matches(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    let llen = left.len();
+    let rlen = right.len();
+    // Only allow starts_with matching when the shorter string is ≥ 3 chars
+    // (prevents "Al" matching "Alex")
+    if llen >= 3 && rlen >= 3 {
+        if left.starts_with(right) || right.starts_with(left) {
+            return true;
+        }
+    }
+    left.trim_end_matches('s') == right.trim_end_matches('s')
 }
 
 fn abstain_topic_terms(question: &str) -> Vec<String> {
@@ -745,8 +767,12 @@ fn is_yes_no_question(question: &str) -> bool {
 }
 
 fn packet_supports_expected_subject(packet: &MemoryPacketForAnswerer, expected: &str) -> bool {
-    packet_speaker(packet).as_deref() == Some(expected)
-        || subject_mention(&packet.content).as_deref() == Some(expected)
+    packet_speaker(packet)
+        .as_deref()
+        .is_some_and(|s| speaker_matches(s, expected))
+        || subject_mention(&packet.content)
+            .as_deref()
+            .is_some_and(|s| speaker_matches(s, expected))
         || packet
             .content
             .to_lowercase()
@@ -1422,7 +1448,7 @@ fn specific_overlap(question: &str, text: &str) -> usize {
     tokenize(question)
         .into_iter()
         .filter(|term| {
-            term.len() > 3
+            term.len() >= 3
                 && !matches!(
                     term.as_str(),
                     "what" | "where" | "when" | "many" | "much" | "long" | "from" | "with"

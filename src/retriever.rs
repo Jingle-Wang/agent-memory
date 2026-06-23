@@ -27,9 +27,9 @@ struct ScoringWeights {
 }
 
 const WEIGHTS_HASH: ScoringWeights = ScoringWeights {
-    term_density: 0.25,
-    term_freq: 0.25,
-    lexical: 0.20,
+    term_density: 0.32, // reduced 0.45→0.32 to offset prefix_bonus increase
+    term_freq: 0.13,    // reduced 0.25→0.13 to offset prefix_bonus increase
+    lexical: 0.00,      // was Jaccard duplicate of term_density — zeroed out
     entity_bonus: 0.15,
     speaker_match: 0.05,
     vector: 0.02,
@@ -38,14 +38,14 @@ const WEIGHTS_HASH: ScoringWeights = ScoringWeights {
 };
 
 const WEIGHTS_OLLAMA: ScoringWeights = ScoringWeights {
-    term_density: 0.15,
-    term_freq: 0.12,
-    lexical: 0.13,
-    entity_bonus: 0.18,
-    speaker_match: 0.05,
-    vector: 0.30,
-    importance: 0.03,
-    type_bonus: 0.10,
+    term_density: 0.22,  // proportionally scaled 0.18→0.22 (sum→1.0)
+    term_freq: 0.09,     // proportionally scaled 0.07→0.09
+    lexical: 0.00,       // was Jaccard duplicate of term_density — zeroed out
+    entity_bonus: 0.22,  // proportionally scaled 0.18→0.22
+    speaker_match: 0.06, // proportionally scaled 0.05→0.06
+    vector: 0.25,        // proportionally scaled 0.20→0.25
+    importance: 0.04,    // proportionally scaled 0.03→0.04
+    type_bonus: 0.12,    // proportionally scaled 0.10→0.12
 };
 
 // ── Retriever ───────────────────────────────────────────────────────────────
@@ -253,7 +253,7 @@ impl HybridMemoryRetriever {
                     + weights.speaker_match * speaker_bonus
                     + weights.importance * importance
                     + weights.type_bonus * type_factor
-                    + 0.10 * prefix_bonus;
+                    + 0.25 * prefix_bonus;
 
                 let mut reasons = Vec::new();
                 if cosine > 0.3 {
@@ -284,13 +284,28 @@ impl HybridMemoryRetriever {
             })
             .collect();
 
-        // Sort descending by score and truncate
+        // Sort descending by score and apply source diversity dedup
         packets.sort_by(|left, right| {
             right
                 .score
                 .partial_cmp(&left.score)
                 .unwrap_or(Ordering::Equal)
         });
+
+        // Dedup: keep at most 2 results per source_event_id so a single
+        // turn doesn't monopolize top-K (pattern from HeuristicReranker).
+        let mut source_counts: HashMap<String, usize> = HashMap::new();
+        packets.retain(|packet| {
+            if let Some(ref source) = packet.memory.source_event_id {
+                let count = source_counts.entry(source.clone()).or_insert(0);
+                if *count >= 2 {
+                    return false;
+                }
+                *count += 1;
+            }
+            true
+        });
+
         packets.truncate(query.limit);
         Ok(packets)
     }
