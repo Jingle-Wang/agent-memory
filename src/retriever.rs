@@ -190,7 +190,7 @@ impl HybridMemoryRetriever {
                             .collect::<BTreeSet<_>>()
                     })
                     .unwrap_or_default();
-                let entity_boost = compute_entity_boost(&query_entities, &mem_entities);
+               let entity_boost = compute_entity_boost(&query_entities, &mem_entities);
 
                 // ── 5b. temporal boost (Phase 4) ────────────────────────────
                 // Prefer earlier memories when entity match exists
@@ -202,7 +202,7 @@ impl HybridMemoryRetriever {
                     0.0
                 };
 
-                // ── 6. speaker match ──────────────────────────────────
+               // ── 6. speaker match ──────────────────────────────────
                 let speaker = memory
                     .metadata
                     .get("speaker")
