@@ -143,9 +143,7 @@ impl<A: Answerer, J: Judge> BenchmarkRunner<A, J> {
                         all
                     }
                     Err(e) => {
-                        eprintln!(
-                            "WARN [query-expansion] failed: {e} — using original query only"
-                        );
+                        eprintln!("WARN [query-expansion] failed: {e} — using original query only");
                         vec![question.text.clone()]
                     }
                 }
@@ -539,9 +537,7 @@ fn parse_query_variants(response: &str) -> Result<Vec<String>, crate::llm::LlmEr
         .collect();
 
     if result.is_empty() {
-        return Err(crate::llm::LlmError::new(
-            "no valid query variants found",
-        ));
+        return Err(crate::llm::LlmError::new("no valid query variants found"));
     }
     Ok(result)
 }

@@ -227,19 +227,19 @@ fn extract_week_range(value: &str) -> Option<((u32, u32, u32), (u32, u32, u32))>
         let date = extract_date(value)?;
         // Week of <date>: the 7-day period containing that date.
         // Approximate: start = date, end = date + 6
-        return Some(build_week_range(date, 0));
+        return build_week_range(date, 0);
     }
 
     if lower.contains("week before") {
         let date = extract_date(value)?;
         // Week before <date>: 7 days ending the day before <date>
-        return Some(build_week_range(date, -7));
+        return build_week_range(date, -7);
     }
 
     if lower.contains("week after") {
         let date = extract_date(value)?;
         // Week after <date>: 7 days starting the day after <date>
-        return Some(build_week_range(date, 1));
+        return build_week_range(date, 1);
     }
 
     None
@@ -288,10 +288,10 @@ fn weeks_overlap(
     a: ((u32, u32, u32), (u32, u32, u32)),
     b: ((u32, u32, u32), (u32, u32, u32)),
 ) -> bool {
-    let a_start = date_to_epoch_days(a.0)?;
-    let a_end = date_to_epoch_days(a.1)?;
-    let b_start = date_to_epoch_days(b.0)?;
-    let b_end = date_to_epoch_days(b.1)?;
+    let a_start = date_to_epoch_days(a.0).unwrap_or(0);
+    let a_end = date_to_epoch_days(a.1).unwrap_or(0);
+    let b_start = date_to_epoch_days(b.0).unwrap_or(0);
+    let b_end = date_to_epoch_days(b.1).unwrap_or(0);
     a_start <= b_end && b_start <= a_end
 }
 
