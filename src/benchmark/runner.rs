@@ -12,7 +12,7 @@ use crate::embedding::token_overlap_score;
 use crate::engine::MemoryEngine;
 use crate::entity::enrich_memory_entities;
 use crate::extractor::MemoryExtractor;
-use crate::llm::LlmProviderMetadata;
+use crate::llm::{ConfiguredLlmProvider, LlmProvider, LlmProviderMetadata};
 use crate::models::{Event, Memory, MemoryPacket, MemoryQuery, MemoryType};
 use crate::observation::extract_observations;
 use crate::store::{MemoryStore, StoreError, StoreResult};
@@ -74,6 +74,8 @@ pub struct BenchmarkRunner<A: Answerer, J: Judge> {
     answerer: A,
     judge: J,
     reranker: Option<Box<dyn CandidateReranker>>,
+    /// Phase 4: optional LLM provider for query expansion
+    query_expander: Option<ConfiguredLlmProvider>,
 }
 
 impl<A: Answerer, J: Judge> BenchmarkRunner<A, J> {
@@ -82,11 +84,18 @@ impl<A: Answerer, J: Judge> BenchmarkRunner<A, J> {
             answerer,
             judge,
             reranker: None,
+            query_expander: None,
         }
     }
 
     pub fn with_reranker(mut self, reranker: impl CandidateReranker + 'static) -> Self {
         self.reranker = Some(Box::new(reranker));
+        self
+    }
+
+    /// Phase 4: enable LLM query expansion for vocabulary-bridging.
+    pub fn with_query_expansion(mut self, provider: ConfiguredLlmProvider) -> Self {
+        self.query_expander = Some(provider);
         self
     }
 
@@ -125,11 +134,44 @@ impl<A: Answerer, J: Judge> BenchmarkRunner<A, J> {
             .take(config.max_questions.unwrap_or(usize::MAX))
         {
             let started = Instant::now();
-            let query = MemoryQuery::new(question.text.clone())
+            // Phase 4: expand query + multi-query fusion
+            let query_texts = if let Some(expander) = &self.query_expander {
+                match expand_query_llm(expander, &question.text) {
+                    Ok(variants) => {
+                        let mut all = vec![question.text.clone()];
+                        all.extend(variants);
+                        all
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "WARN [query-expansion] failed: {e} — using original query only"
+                        );
+                        vec![question.text.clone()]
+                    }
+                }
+            } else {
+                vec![question.text.clone()]
+            };
+
+            let search_limit = config.search_candidate_limit();
+            let side_channel = config.include_side_channel_search();
+
+            // Search with first (original) query
+            let first_query = MemoryQuery::new(query_texts[0].clone())
                 .namespace(question.conversation_id.clone())
-                .limit(config.search_candidate_limit())
-                .include_side_channel(config.include_side_channel_search());
-            let mut candidates = engine.search(query)?;
+                .limit(search_limit)
+                .include_side_channel(side_channel);
+            let mut candidates = engine.search(first_query)?;
+
+            // Fuse with expanded variant searches (OR-combine, keep best score)
+            for variant in &query_texts[1..] {
+                let variant_query = MemoryQuery::new(variant.clone())
+                    .namespace(question.conversation_id.clone())
+                    .limit(search_limit)
+                    .include_side_channel(side_channel);
+                let variant_results = engine.search(variant_query)?;
+                candidates = fuse_candidates(candidates, variant_results, search_limit);
+            }
             if config.mode == BenchmarkMode::Answer {
                 if let Some(reranker) = &self.reranker {
                     candidates = reranker.rerank_candidates(&question.text, &candidates)?;
@@ -435,11 +477,106 @@ impl BenchmarkRunConfig {
             return self.top_k.max(200);
         }
         if self.mode == BenchmarkMode::Answer {
-            self.top_k.max(20)
+            self.top_k.max(50) // Phase 4: larger pool for LLM reranker
         } else {
             self.top_k
         }
     }
+}
+
+// ── Phase 4: LLM query expansion ────────────────────────────────────────────
+
+/// Expand a question into 3 alternative phrasings using an LLM.
+/// Bridges the vocabulary gap between query and evidence.
+fn expand_query_llm(
+    provider: &ConfiguredLlmProvider,
+    question: &str,
+) -> Result<Vec<String>, crate::llm::LlmError> {
+    use crate::llm::{LlmCompletionRequest, LlmMessage};
+
+    let request = LlmCompletionRequest {
+        model: provider.metadata().model,
+        messages: vec![
+            LlmMessage::system(
+                "You are a query expander for a memory retrieval system. \
+                 Given a question, generate 3 alternative phrasings that use different vocabulary \
+                 but ask the same question. Each alternative should be a complete question. \
+                 Return ONLY a JSON array of strings. Example: \
+                 [\"alternative 1\", \"alternative 2\", \"alternative 3\"]",
+            ),
+            LlmMessage::user(format!("Question: {question}")),
+        ],
+        temperature: 0.3,
+        max_tokens: 256,
+        response_format: Some(serde_json::json!({"type": "json_object"})),
+    };
+    let response = provider.complete(&request)?;
+    parse_query_variants(&response)
+}
+
+/// Parse LLM query expansion response into a Vec of variant strings.
+fn parse_query_variants(response: &str) -> Result<Vec<String>, crate::llm::LlmError> {
+    let trimmed = response.trim();
+    let value: serde_json::Value = serde_json::from_str(trimmed)
+        .map_err(|e| crate::llm::LlmError::new(format!("failed to parse query variants: {e}")))?;
+
+    let variants = if let Some(arr) = value.get("variants").and_then(|v| v.as_array()) {
+        arr
+    } else if let Some(arr) = value.as_array() {
+        arr
+    } else {
+        return Err(crate::llm::LlmError::new(
+            "query expansion response is not an array",
+        ));
+    };
+
+    let result: Vec<String> = variants
+        .iter()
+        .filter_map(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && s.len() > 3)
+        .take(3)
+        .collect();
+
+    if result.is_empty() {
+        return Err(crate::llm::LlmError::new(
+            "no valid query variants found",
+        ));
+    }
+    Ok(result)
+}
+
+/// Fuse two sets of search results: OR-combine by memory ID, keeping
+/// the highest score per memory, then re-sort and truncate.
+fn fuse_candidates(
+    existing: Vec<MemoryPacket>,
+    new_results: Vec<MemoryPacket>,
+    limit: usize,
+) -> Vec<MemoryPacket> {
+    let mut score_map: std::collections::HashMap<String, MemoryPacket> = existing
+        .into_iter()
+        .map(|p| (p.memory.id.clone(), p))
+        .collect();
+
+    for packet in new_results {
+        score_map
+            .entry(packet.memory.id.clone())
+            .and_modify(|existing| {
+                if packet.score > existing.score {
+                    *existing = packet.clone();
+                }
+            })
+            .or_insert(packet);
+    }
+
+    let mut fused: Vec<MemoryPacket> = score_map.into_values().collect();
+    fused.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    fused.truncate(limit);
+    fused
 }
 
 fn assemble_answer_evidence<S: MemoryStore>(

@@ -147,12 +147,16 @@ impl Answerer for SpanExtractiveAnswerer {
             .collect::<Vec<_>>();
         if asks_when(&question) {
             if let Some(answer) = extract_date_like(&context) {
-                return AnswerOutput { answer };
+                // Phase 4: resolve relative dates using evidence metadata
+                return AnswerOutput {
+                    answer: resolve_date_from_packet_metadata(&answer, &input.retrieved),
+                };
             }
         }
         let sentence = best_typed_packet_sentence(&input.question.text, &input.retrieved);
         let answer = if asks_when(&question) {
-            extract_date_like(&[sentence.as_str()]).unwrap_or(sentence)
+            let date_answer = extract_date_like(&[sentence.as_str()]).unwrap_or(sentence);
+            resolve_date_from_packet_metadata(&date_answer, &input.retrieved)
         } else if question.contains("where") {
             extract_location_from_sentence(&question, &sentence).unwrap_or(sentence)
         } else if asks_title(&question) {
@@ -162,6 +166,42 @@ impl Answerer for SpanExtractiveAnswerer {
         };
         AnswerOutput { answer }
     }
+}
+
+// ── Phase 4: Metadata-aware relative date resolution ────────────────────────
+
+/// Resolve relative date expressions ("yesterday", "last week", etc.)
+/// into absolute dates using the timestamp metadata from evidence packets.
+fn resolve_date_from_packet_metadata(
+    date_answer: &str,
+    packets: &[MemoryPacketForAnswerer],
+) -> String {
+    // Only attempt resolution if the answer looks like a relative date
+    let lower = date_answer.to_lowercase();
+    if !is_relative_date_phrase(&lower) {
+        return date_answer.to_string();
+    }
+    // Find a packet with timestamp metadata to use as anchor
+    for packet in packets {
+        let anchor = packet
+            .metadata
+            .get("event_time")
+            .or_else(|| packet.metadata.get("benchmark_timestamp"))
+            .or_else(|| packet.metadata.get("timestamp"));
+        if let Some(anchor) = anchor {
+            if let Some(date_parts) = parse_date_parts(anchor) {
+                // Try to resolve the relative expression using this anchor
+                let test_sentence = format!(
+                    "[verbatim_turn time={} {} {}] {}",
+                    date_parts.0, date_parts.1, date_parts.2, date_answer
+                );
+                if let Some(resolved) = resolve_relative_date_from_timestamp(&test_sentence) {
+                    return coarsen_date_answer(&resolved);
+                }
+            }
+        }
+    }
+    date_answer.to_string()
 }
 
 fn high_precision_span_candidate(

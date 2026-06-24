@@ -190,9 +190,19 @@ impl HybridMemoryRetriever {
                             .collect::<BTreeSet<_>>()
                     })
                     .unwrap_or_default();
-                let entity_boost = compute_entity_boost(&query_entities, &mem_entities);
+               let entity_boost = compute_entity_boost(&query_entities, &mem_entities);
 
-                // ── 6. speaker match ──────────────────────────────────
+                // ── 5b. temporal boost (Phase 4) ────────────────────────────
+                // Prefer earlier memories when entity match exists
+                let temporal_boost = if entity_boost > 0.05 {
+                    turn_index_from_source(memory.source_event_id.as_deref())
+                        .map(|idx| 1.0 / (1.0 + idx as f32))
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+
+               // ── 6. speaker match ──────────────────────────────────
                 let speaker = memory
                     .metadata
                     .get("speaker")
@@ -253,7 +263,8 @@ impl HybridMemoryRetriever {
                     + weights.speaker_match * speaker_bonus
                     + weights.importance * importance
                     + weights.type_bonus * type_factor
-                    + 0.25 * prefix_bonus;
+                    + 0.25 * prefix_bonus
+                    + 0.1 * temporal_boost; // Phase 4: recency signal
 
                 let mut reasons = Vec::new();
                 if cosine > 0.3 {
@@ -399,6 +410,22 @@ fn bm25_score(query: &str, doc: &str, stats: &Bm25Stats) -> f32 {
     }
 
     score
+}
+
+// ── Phase 4: temporal boost helper ──────────────────────────────────────────
+
+/// Extract the turn index from a source_event_id string.
+/// Handles formats like "locomo_conv_1_turn_5", "turn_5", "5", etc.
+fn turn_index_from_source(source: Option<&str>) -> Option<usize> {
+    let source = source?;
+    // Try the last underscore-separated component
+    for part in source.rsplit('_') {
+        if let Ok(n) = part.parse::<usize>() {
+            return Some(n);
+        }
+    }
+    // Try the whole string
+    source.parse::<usize>().ok()
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

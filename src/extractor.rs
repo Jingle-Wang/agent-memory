@@ -145,6 +145,7 @@ Each fact should be a complete, self-contained sentence including:
 - Specific dates (convert relative dates using the Observation Date)
 - Emotions and reactions when expressed
 - Exact terms used (LGBTQ, transgender, adoption, support group, etc.)
+- Preserve key concrete words from the original message (e.g., "swimming", "hiking", "camping", "volunteering") — do NOT replace specific activities with vague phrases like "taking care of ourselves" or "spending time together"
 
 Examples:
 

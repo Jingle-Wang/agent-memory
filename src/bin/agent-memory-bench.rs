@@ -315,15 +315,18 @@ where
     A: Answerer,
     J: Judge,
 {
-    if let Some(provider) = provider {
-        runner.with_reranker(LlmReranker::new(provider))
+    let runner = if let Some(provider) = provider.clone() {
+        // Phase 4: use same LLM provider for both reranking and query expansion
+        let runner = runner.with_reranker(LlmReranker::new(provider.clone()));
+        runner.with_query_expansion(provider)
     } else if use_heuristic_fallback
         && env::var("AGENT_MEMORY_HEURISTIC_RERANK").as_deref() == Ok("1")
     {
         runner.with_reranker(HeuristicReranker::new())
     } else {
         runner
-    }
+    };
+    runner
 }
 
 fn print_summary(summary: &agent_memory::benchmark::BenchmarkSummary) {
