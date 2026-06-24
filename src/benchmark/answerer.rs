@@ -190,113 +190,18 @@ fn resolve_date_from_packet_metadata(
             .or_else(|| packet.metadata.get("timestamp"));
         if let Some(anchor) = anchor {
             if let Some(date_parts) = parse_date_parts(anchor) {
-                // Resolve using the anchor date directly (not via test sentence)
-                if let Some(resolved) = resolve_relative_against_date(date_answer, date_parts) {
+                // Try to resolve the relative expression using this anchor
+                let test_sentence = format!(
+                    "[verbatim_turn time={} {} {}] {}",
+                    date_parts.0, date_parts.1, date_parts.2, date_answer
+                );
+                if let Some(resolved) = resolve_relative_date_from_timestamp(&test_sentence) {
                     return coarsen_date_answer(&resolved);
                 }
             }
         }
     }
     date_answer.to_string()
-}
-
-/// Resolve a relative date expression ("yesterday", "sunday before 25 May 2023",
-/// "last week", etc.) against a concrete anchor date (year, month, day).
-fn resolve_relative_against_date(date_answer: &str, anchor: (i32, u32, i32)) -> Option<String> {
-    let lower = date_answer.to_lowercase();
-
-    if lower.contains("last year") {
-        return Some((anchor.0 - 1).to_string());
-    }
-    if lower.contains("next year") {
-        return Some((anchor.0 + 1).to_string());
-    }
-    if lower.contains("last week") {
-        return Some(format!("week before {}", format_date(anchor)));
-    }
-    if lower.contains("next week") {
-        return Some(format!("week after {}", format_date(anchor)));
-    }
-    if lower.contains("last month") || lower.contains("next month") {
-        return Some(anchor.0.to_string());
-    }
-
-    // Weekday-relative: "sunday before 25 May 2023", "monday after ...", etc.
-    if let Some((target_dow, direction)) = extract_weekday_direction(&lower) {
-        let anchor_dow = day_of_week(anchor.0, anchor.1, anchor.2 as u32);
-        let offset = weekday_offset(anchor_dow, target_dow, direction);
-        return shift_date(anchor.0, anchor.1, anchor.2 as i32, offset).map(format_date);
-    }
-
-    // Simple day shifts: yesterday / tomorrow / today
-    let offset = if lower.contains("yesterday") {
-        -1
-    } else if lower.contains("tomorrow") {
-        1
-    } else if lower.contains("today") {
-        0
-    } else {
-        return None;
-    };
-    shift_date(anchor.0, anchor.1, anchor.2 as i32, offset).map(format_date)
-}
-
-/// Extract a weekday name and direction ("before" or "after") from a phrase.
-/// Returns (day_of_week_index, offset_sign) where day_of_week: 0=Sun..6=Sat,
-/// offset_sign: -1 for "before", 1 for "after".
-fn extract_weekday_direction(lower: &str) -> Option<(u8, i32)> {
-    let weekdays: [(&str, u8); 7] = [
-        ("sunday", 0),
-        ("monday", 1),
-        ("tuesday", 2),
-        ("wednesday", 3),
-        ("thursday", 4),
-        ("friday", 5),
-        ("saturday", 6),
-    ];
-
-    for (name, dow) in &weekdays {
-        if lower.contains(name) {
-            let direction = if lower.contains("before") {
-                -1
-            } else if lower.contains("after") {
-                1
-            } else {
-                return None;
-            };
-            return Some((*dow, direction));
-        }
-    }
-    None
-}
-
-/// Zeller-like day-of-week computation. Returns 0=Sun, 1=Mon, ..., 6=Sat.
-fn day_of_week(year: i32, month: u32, day: u32) -> u8 {
-    let m = if month < 3 { month + 12 } else { month };
-    let y = if month < 3 { year - 1 } else { year };
-    let q = day as i32;
-    let k = y % 100;
-    let j = y / 100;
-    let h = (q + (13 * (m as i32 + 1)) / 5 + k + k / 4 + j / 4 + 5 * j) % 7;
-    // h = 0=Sat, 1=Sun, ..., 6=Fri  → convert to 0=Sun
-    ((h + 6) % 7) as u8
-}
-
-/// Compute the day offset needed to reach target_dow from anchor_dow
-/// in the given direction. direction: -1 = before (go backwards), 1 = after.
-fn weekday_offset(anchor_dow: u8, target_dow: u8, direction: i32) -> i32 {
-    let anchor = anchor_dow as i32;
-    let target = target_dow as i32;
-    let diff = if direction < 0 {
-        // Go backwards to nearest target_dow
-        let d = (anchor - target).rem_euclid(7);
-        if d == 0 { 7 } else { d }
-    } else {
-        // Go forwards to nearest target_dow
-        let d = (target - anchor).rem_euclid(7);
-        if d == 0 { 7 } else { d }
-    };
-    diff * direction
 }
 
 fn high_precision_span_candidate(

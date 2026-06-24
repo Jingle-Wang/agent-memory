@@ -126,47 +126,13 @@ fn normalize_number_token(token: &str) -> String {
 }
 
 fn same_date(answer: &str, gold: &str) -> bool {
-    // Try exact date extraction first
-    if let (Some(a), Some(g)) = (extract_date(answer), extract_date(gold)) {
-        if a == g {
-            return true;
-        }
-        // Fuzzy: dates within 2 days of each other
-        if let (Some(a_days), Some(g_days)) = (date_to_epoch_days(a), date_to_epoch_days(g)) {
-            if (a_days - g_days).abs() <= 2 {
-                return true;
-            }
-        }
-    }
-
-    // Week range comparison: "week of June 2, 2023" vs "the week before 9 June 2023"
-    if let (Some(a_week), Some(g_week)) = (extract_week_range(answer), extract_week_range(gold)) {
-        if weeks_overlap(a_week, g_week) {
-            return true;
-        }
-    }
-
-    // Partial match: one side has a date range, the other has an exact date
-    if let (Some(a_week), Some(g_date)) = (extract_week_range(answer), extract_date(gold)) {
-        if let Some(g_days) = date_to_epoch_days(g_date) {
-            if g_days >= date_to_epoch_days(a_week.0).unwrap_or(0)
-                && g_days <= date_to_epoch_days(a_week.1).unwrap_or(0)
-            {
-                return true;
-            }
-        }
-    }
-    if let (Some(a_date), Some(g_week)) = (extract_date(answer), extract_week_range(gold)) {
-        if let Some(a_days) = date_to_epoch_days(a_date) {
-            if a_days >= date_to_epoch_days(g_week.0).unwrap_or(0)
-                && a_days <= date_to_epoch_days(g_week.1).unwrap_or(0)
-            {
-                return true;
-            }
-        }
-    }
-
-    false
+    let Some(answer_date) = extract_date(answer) else {
+        return false;
+    };
+    let Some(gold_date) = extract_date(gold) else {
+        return false;
+    };
+    answer_date == gold_date
 }
 
 fn extract_date(value: &str) -> Option<(u32, u32, u32)> {
@@ -206,107 +172,6 @@ fn month_number(token: &str) -> Option<u32> {
         "december" | "dec" => Some(12),
         _ => None,
     }
-}
-
-/// Convert a (year, month, day) tuple to approximate epoch days for comparison.
-fn date_to_epoch_days((y, m, d): (u32, u32, u32)) -> Option<i64> {
-    let y = y as i64;
-    let m = m as i64;
-    let d = d as i64;
-    // Approximate: 365.25 days per year, 30.44 days per month
-    Some((y * 365 + y / 4 - y / 100 + y / 400 + (m - 1) * 30 + d) as i64)
-}
-
-/// Extract a week range from a phrase like "week of June 2, 2023" or
-/// "the week before 9 June 2023". Returns ((start_year, start_month, start_day),
-/// (end_year, end_month, end_day)).
-fn extract_week_range(value: &str) -> Option<((u32, u32, u32), (u32, u32, u32))> {
-    let lower = value.to_lowercase();
-
-    if lower.contains("week of") {
-        let date = extract_date(value)?;
-        // Week of <date>: the 7-day period containing that date.
-        // Approximate: start = date, end = date + 6
-        return Some(build_week_range(date, 0));
-    }
-
-    if lower.contains("week before") {
-        let date = extract_date(value)?;
-        // Week before <date>: 7 days ending the day before <date>
-        return Some(build_week_range(date, -7));
-    }
-
-    if lower.contains("week after") {
-        let date = extract_date(value)?;
-        // Week after <date>: 7 days starting the day after <date>
-        return Some(build_week_range(date, 1));
-    }
-
-    None
-}
-
-/// Build a 7-day range anchored relative to a date.
-/// offset: 0 = week containing date, -7 = week before, 1 = week after.
-fn build_week_range(
-    (y, m, d): (u32, u32, u32),
-    offset: i32,
-) -> Option<((u32, u32, u32), (u32, u32, u32))> {
-    // For simplicity: start = date + offset, end = start + 6
-    let start = shift_date_u32(y, m, d, offset)?;
-    let end = shift_date_u32(start.0, start.1, start.2, 6)?;
-    Some((start, end))
-}
-
-/// Shift a date by N days, operating on u32 tuples.
-fn shift_date_u32(year: u32, month: u32, day: u32, offset_days: i32) -> Option<(u32, u32, u32)> {
-    let mut y = year as i32;
-    let mut m = month;
-    let mut d = day as i32 + offset_days;
-    while d < 1 {
-        if m == 1 {
-            m = 12;
-            y -= 1;
-        } else {
-            m -= 1;
-        }
-        d += days_in_month_u32(y, m) as i32;
-    }
-    while d > days_in_month_u32(y, m) as i32 {
-        d -= days_in_month_u32(y, m) as i32;
-        if m == 12 {
-            m = 1;
-            y += 1;
-        } else {
-            m += 1;
-        }
-    }
-    Some((y as u32, m, d as u32))
-}
-
-/// Check if two week ranges overlap (share at least one day).
-fn weeks_overlap(
-    a: ((u32, u32, u32), (u32, u32, u32)),
-    b: ((u32, u32, u32), (u32, u32, u32)),
-) -> bool {
-    let a_start = date_to_epoch_days(a.0)?;
-    let a_end = date_to_epoch_days(a.1)?;
-    let b_start = date_to_epoch_days(b.0)?;
-    let b_end = date_to_epoch_days(b.1)?;
-    a_start <= b_end && b_start <= a_end
-}
-
-fn days_in_month_u32(year: i32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 if is_leap_year_u32(year) => 29,
-        2 => 28,
-        _ => 30,
-    }
-}
-
-fn is_leap_year_u32(year: i32) -> bool {
-    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 #[cfg(test)]
